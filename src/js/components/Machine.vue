@@ -23,11 +23,6 @@
             <play-icon></play-icon>
           </button>
         </div>
-        <div class="link">
-          <button @click.prevent="link" aria-label="link">
-            <link-icon></link-icon>
-          </button>
-        </div>
       </div>
       <div class="tracks" aria-labelledby="dm-tracks-heading">
         <h2 class="vh" id="dm-tracks-heading">Drum Machine Tracks</h2>
@@ -116,7 +111,6 @@
 import PlayIcon from './PlayIcon.vue';
 import MuteIcon from './MuteIcon.vue';
 import AddIcon from './AddIcon.vue';
-import LinkIcon from './LinkIcon.vue';
 import RemoveIcon from './RemoveIcon.vue';
 import ResetIcon from './ResetIcon.vue';
 import SettingsIcon from './SettingsIcon.vue';
@@ -285,7 +279,6 @@ export default {
     PlayIcon,
     MuteIcon,
     AddIcon,
-    LinkIcon,
     RemoveIcon,
     ResetIcon,
     SettingsIcon
@@ -347,39 +340,6 @@ export default {
       this.sounds.forEach((sound) => {
         sound.buffer = this.soundLoader(sound.url);
       });
-    },
-    setState() {
-
-      var storage = this.$localStorage.get('drum-machine-state');
-
-      if (storage) {
-        var savedData = JSON.parse(storage);
-        this.sounds = savedData.sounds;
-        this.meta = savedData.meta;
-      } else {
-        this.sounds = JSON.parse(JSON.stringify(defaultState.sounds));
-        this.meta = JSON.parse(JSON.stringify(defaultState.meta));
-      }
-
-      var queryState = parseQuery(window.location.search);
-      if (queryState) {
-        var params = Object.keys(queryState);
-        var state = {
-            sounds: [],
-            meta: {}
-        };
-        params.forEach(function(key) {
-            if (key === 'bpm') {
-                state.meta.bpm = JSON.parse(queryState.bpm[0]);
-            } else {
-                var sound = JSON.parse(queryState[key][0]);
-                sound.name = key;
-                state.sounds.push(sound);
-            }
-        });
-        this.updateState(state);
-      }
-
     },
     futureTick() {
       var noteLength = 60 / this.meta.bpm;
@@ -501,22 +461,14 @@ export default {
         if (newState.meta) {
             this.meta.bpm = newState.meta.bpm;
         }
-    },
-    link() {
-        var parts = ['bpm=' +this.meta.bpm];
-        this.sounds.forEach(function(sound) {
-            var persisted = soundProps.reduce(function(agg, prop) {
-                agg[prop] = sound[prop];
-                return agg;
-            }, {});
-            var part = encodeURIComponent(sound.name) + '=' + encodeURIComponent(JSON.stringify(persisted));
-            parts.push(part);
-        });
 
-        if (history.pushState) {
-          var newurl = window.location.protocol + "//" + window.location.host + window.location.pathname + '?' + parts.join('&');
-          window.history.pushState({path:newurl},'',newurl);
-        }
+        this.updateMeta();
+    },
+    updateMeta() {
+        var lengthInfo = this.lengthInfo();
+        this.meta.beatsLength = 100 / lengthInfo.longest + '%';
+        var uniqueLengths = lengthInfo.lengths.filter((v, i, a) => a.indexOf(v) === i);
+        this.meta.compoundLength = uniqueLengths.reduce((a, b) => a * b);
     },
     addBeat(sound) {
       sound.length += 1;
@@ -535,7 +487,6 @@ export default {
         this.scheduler();
       } else {
         window.clearTimeout(window.t);
-        this.saveData();
       }
     },
     lengthInfo() {
@@ -563,32 +514,107 @@ export default {
       }, 100);
     },
     saveData() {
-      var data = {};
-      data.sounds = this.sounds;
-      data.meta = this.meta;
-      this.$localStorage.set('drum-machine-state', JSON.stringify(data));
+      if (window.matchMedia('(display-mode: standalone)').matches) {
+          this.saveDataLocalStorage();
+      } else {
+          this.saveDataQuery();
+      }
+    },
+    saveDataLocalStorage() {
+        var data = {};
+        data.sounds = this.sounds;
+        data.meta = this.meta;
+        this.$localStorage.set('drum-machine-state', JSON.stringify(data));
+    },
+    saveDataQuery() {
+        var parts = ['bpm=' +this.meta.bpm];
+        this.sounds.forEach(function(sound) {
+            var persisted = soundProps.reduce(function(agg, prop) {
+                agg[prop] = sound[prop];
+                return agg;
+            }, {});
+            var part = encodeURIComponent(sound.name) + '=' + encodeURIComponent(JSON.stringify(persisted));
+            parts.push(part);
+        });
+
+        if (history.pushState) {
+          var newurl = window.location.protocol + "//" + window.location.host + window.location.pathname + '?' + parts.join('&');
+          window.history.pushState({path:newurl},'',newurl);
+        }
+    },
+    loadData() {
+        this.sounds = JSON.parse(JSON.stringify(defaultState.sounds));
+        this.meta = JSON.parse(JSON.stringify(defaultState.meta));
+
+        if (window.matchMedia('(display-mode: standalone)').matches) {
+            this.loadDataLocalStorage();
+        } else {
+            this.loadDataQuery();
+        }
+    },
+    loadDataLocalStorage() {
+        var storage = this.$localStorage.get('drum-machine-state');
+
+        if (storage) {
+          var savedData = JSON.parse(storage);
+          this.sounds = savedData.sounds;
+          this.meta = savedData.meta;
+        }
+    },
+    loadDataQuery() {
+        var queryState = parseQuery(window.location.search);
+        if (queryState) {
+          var params = Object.keys(queryState);
+          var state = {
+              sounds: [],
+              meta: {}
+          };
+          params.forEach(function(key) {
+              if (key === 'bpm') {
+                  state.meta.bpm = JSON.parse(queryState.bpm[0]);
+              } else {
+                  var sound = JSON.parse(queryState[key][0]);
+                  sound.name = key;
+                  state.sounds.push(sound);
+              }
+          });
+          this.updateState(state);
+        }
+    },
+    stateChange() {
+      clearTimeout(this.stateChangeTimeout);
+      var context = this;
+      this.stateChangeTimeout = setTimeout(function() {
+          this.saveData();
+      }.bind(this), 500);
     }
   },
   watch: {
     sounds: {
       handler() {
-        var lengthInfo = this.lengthInfo();
-        this.meta.beatsLength = 100 / lengthInfo.longest + '%';
-        var uniqueLengths = lengthInfo.lengths.filter((v, i, a) => a.indexOf(v) === i);
-        this.meta.compoundLength = uniqueLengths.reduce((a, b) => a * b);
+        this.updateMeta();
+        this.stateChange();
       },
       deep: true
+    },
+    meta: {
+        handler() {
+            this.stateChange();
+        },
+        deep: true
     }
   },
   mounted() {
     this.audioContext = this.audioContextCheck();
-    this.setState();
+    this.loadData();
     // Test for detune method support
     var testBufferResource = this.audioContext.createBufferSource();
     if (!testBufferResource.detune) {
       this.meta.detuneSupport = false;
     }
     this.loadSounds();
+
+
     window.requestAnimFrame = (() => {
       return  window.requestAnimationFrame ||
               window.webkitRequestAnimationFrame ||
